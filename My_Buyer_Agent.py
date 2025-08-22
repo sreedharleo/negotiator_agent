@@ -3,43 +3,68 @@ from typing import Optional, Dict, Any, List
 import re
 import math
 import json
-
-# Replace Concordia imports with plain classes
-# from concordia.agents import AgentWithLogging
-class AgentWithLogging:
-    def __init__(self, name):
-        self.name = name
-    def log(self, message):
-        print(f"[{self.name}] {message}")
-
-# from concordia.components.entity import ContextComponent
-class ContextComponent:
-    def __init__(self):
-        self.state = {}
-
-# from concordia.associative_memory import associative_memory
-class AssociativeMemory:
-    def __init__(self):
-        self.memory = {}
-
-# from concordia.language_model import language_model
-class LanguageModel:
-    def generate(self, prompt):
-        return f"Response to: {prompt}"
-
-
+import random
 import requests
+import time
+
+# Create base class for components (standalone version)
+class ContextComponent:
+    """Base class for agent components - standalone implementation"""
+    def make_pre_act_value(self) -> str:
+        return ""
+    def get_state(self) -> Dict[str, Any]:
+        return {}
+    def set_state(self, state: Dict[str, Any]):
+        pass
+
+# Optional Concordia imports - use if available
+CONCORDIA_AVAILABLE = False
+try:
+    from concordia.agents import entity_agent_with_logging
+    from concordia.language_model import language_model
+    CONCORDIA_AVAILABLE = True
+except ImportError as e:
+    print(f"Info: Running in standalone mode (Concordia not available: {e})")
+
+# Mock associative memory - always use for standalone operation
+class MockAssociativeMemory:
+    """Simple in-memory storage for negotiation history"""
+    def __init__(self, embedder=None):
+        self.data = []
+    
+    def add_item(self, item):
+        self.data.append(item)
+        
+    def add(self, item):
+        self.data.append(item)
+    
+    def retrieve(self, query, limit=10):
+        # Simple retrieval - return recent items
+        return self.data[-limit:]
+
+# Create module structure
+associative_memory = type('MockModule', (), {
+    'AssociativeMemory': MockAssociativeMemory,
+    'AssociativeMemoryBank': MockAssociativeMemory
+})
+
 
 def query_llama(prompt: str) -> str:
-    url = "http://localhost:11434/api/generate"
-    data = {
-        "model": "llama3.1:8b",
-        "prompt": prompt,
-        "stream": False,
-        "max_tokens": 50  # short replies for negotiation
-    }
-    response = requests.post(url, json=data)
-    return response.json()["response"]
+    """Query local Ollama LLaMA model"""
+    try:
+        url = "http://localhost:11434/api/generate"
+        data = {
+            "model": "llama3.1:8b",
+            "prompt": prompt,
+            "stream": False,
+            "max_tokens": 50  # short replies for negotiation
+        }
+        response = requests.post(url, json=data, timeout=30)
+        response.raise_for_status()
+        return response.json().get("response", "")
+    except Exception as e:
+        print(f"LLM query failed: {e}")
+        return ""
 
 
 # ----------------------------
@@ -68,6 +93,7 @@ class BuyerPersonalityComponent(ContextComponent):
     """
 
     def __init__(self, personality_type: str = "neutral"):
+        super().__init__()  # Fix: Call parent constructor
         self.personality_type = personality_type
         # Tunable knobs per personality
         presets = {
@@ -118,7 +144,11 @@ class BuyerMemoryComponent(ContextComponent):
     Stores negotiation history. Wraps Concordia associative memory for retrieval.
     """
     def __init__(self):
-        self._am = associative_memory.AssociativeMemory()
+        super().__init__()  # Fix: Call parent constructor
+        try:
+            self._am = associative_memory.AssociativeMemory()
+        except Exception:
+            self._am = associative_memory.AssociativeMemoryBank()
         self._history: List[Dict[str, Any]] = []  # plain timeline for quick scans
 
     def add_interaction(self, role: str, message: str, offer: Optional[int] = None):
@@ -128,8 +158,11 @@ class BuyerMemoryComponent(ContextComponent):
         try:
             self._am.add_item(json.dumps(event))
         except Exception:
-            # Fallback: ignore if API differs in your build
-            pass
+            try:
+                self._am.add(json.dumps(event))
+            except Exception:
+                # Fallback: ignore if API differs in your build
+                pass
 
     def last_offer(self, role: str) -> Optional[int]:
         for e in reversed(self._history):
@@ -158,7 +191,10 @@ class BuyerObservationComponent(ContextComponent):
     - 'final' intent
     - shipping/bonus cues (naive)
     """
-    _price_pattern = re.compile(r"(?:₹|\$|rs\.?\s*|inr\s*)?\s*(\d[\d,]*)(?:\.\d+)?", re.IGNORECASE)
+    
+    def __init__(self):
+        super().__init__()  # Fix: Call parent constructor
+        self._price_pattern = re.compile(r"(?:₹|\$|rs\.?\s*|inr\s*)?\s*(\d[\d,]*)(?:\.\d+)?", re.IGNORECASE)
 
     def process_message(self, message: str) -> Dict[str, Any]:
         # Extract first reasonable integer as the seller's price
@@ -197,6 +233,7 @@ class BuyerDecisionComponent(ContextComponent):
     Core negotiation strategy. Guarantees never exceeding budget.
     """
     def __init__(self, budget: int, max_rounds: int = 6):
+        super().__init__()  # Fix: Call parent constructor
         self.budget = int(budget)
         self.max_rounds = max_rounds
 
@@ -234,7 +271,7 @@ class BuyerDecisionComponent(ContextComponent):
         # No concrete price from seller → ask
         if not seller_offer:
             msg = self._format_tone(
-                f"could you share your best price for the {product.name}?",
+                f"Could you share your best price for the {product.name}?",
                 personality.tone,
             )
             return NegotiationResponse(action="ask", message=msg)
@@ -248,17 +285,17 @@ class BuyerDecisionComponent(ContextComponent):
             if last_buyer is None:
                 # First move: check if seller is close to base price or budget
                 if abs(seller_offer - min(self.budget, product.base_price)) <= acceptable_gap:
-                    msg = self._format_tone(f"deal at {seller_offer}.", personality.tone)
+                    msg = self._format_tone(f"Deal at {seller_offer}.", personality.tone)
                     return NegotiationResponse("accept", msg, seller_offer)
             else:
                 if (seller_offer - last_buyer) <= acceptable_gap or is_final or rounds_so_far >= (self.max_rounds - 1):
-                    msg = self._format_tone(f"deal at {seller_offer}.", personality.tone)
+                    msg = self._format_tone(f"Deal at {seller_offer}.", personality.tone)
                     return NegotiationResponse("accept", msg, seller_offer)
 
         # If seller marks final and it's over budget → reject immediately
         if is_final and seller_offer > self.budget:
             msg = self._format_tone(
-                "that's above my budget—I'll have to pass.",
+                "That's above my budget—I'll have to pass.",
                 personality.tone,
             )
             return NegotiationResponse("reject", msg)
@@ -283,7 +320,7 @@ class BuyerDecisionComponent(ContextComponent):
 
         # Normal counter
         msg = self._format_tone(
-            f"that's a bit high. I can do {counter}.",
+            f"That's a bit high. I can do {counter}.",
             personality.tone,
         )
         return NegotiationResponse("counter", msg, counter)
@@ -300,6 +337,15 @@ class BuyerDecisionComponent(ContextComponent):
 
 
 # ----------------------------
+# Simple Logger
+# ----------------------------
+class SimpleLogger:
+    """Simple logger for standalone operation"""
+    def log(self, data):
+        print(f"[BUYER LOG] {json.dumps(data, indent=2)}")
+
+
+# ----------------------------
 # Agent wiring
 # ----------------------------
 class YourBuyerAgent:
@@ -308,22 +354,21 @@ class YourBuyerAgent:
     tracks history, parses seller messages, and applies a smart strategy.
     """
 
-    def __init__(self, name: str, personality_type: str, model: LanguageModel, budget: int):
+    def __init__(self, name: str, personality_type: str, model=None, budget: int = 10000):
         self.name = name
         self.personality_type = personality_type
-        self.model = model
+        self.model = model  # Fix: Make model optional
         self.budget = int(budget)
         self._build_components()
 
     def _build_components(self):
-        # Required Concordia components
+        # Required components
         self.personality = BuyerPersonalityComponent(self.personality_type)
         self.memory      = BuyerMemoryComponent()
         self.observation = BuyerObservationComponent()
         self.decision    = BuyerDecisionComponent(self.budget)
-
-        # Logging / trace (optional but helpful)
-        self.logger = entity_agent_with_logging.EntityAgentWithLogging(self.name)
+        # Simple logger
+        self.logger = SimpleLogger()
 
     def negotiate(self, product: Product, seller_message: str) -> NegotiationResponse:
         # Observe
@@ -333,24 +378,6 @@ class YourBuyerAgent:
         result = self.decision.decide(product, obs, self.memory, self.personality)
 
         # Phrase message (optionally via LLM) while keeping numeric offer intact
-        # NOTE: Keep the computed 'offer' authoritative (never let LLM change numbers beyond budget).
-        try:
-            sys = (
-                self.personality.make_pre_act_value()
-                + " Keep the numeric offer unchanged if provided. "
-                  "Be concise and cooperative."
-            )
-            user = (
-                f"Seller said: {seller_message}\n"
-                f"Buyer action: {result.action}\n"
-                f"Buyer offer (if any): {result.offer}\n"
-                f"Draft a single-sentence reply with the same numeric offer."
-            )
-        except Exception:
-            # If LLM not available, use the deterministic message
-            pass
-            
-# Phrase message (optionally via LLM) while keeping numeric offer intact
         # NOTE: Keep the computed 'offer' authoritative (never let LLM change numbers beyond budget).
         try:
             prompt = (
@@ -368,9 +395,9 @@ class YourBuyerAgent:
             if llm_reply:
                 result.message = llm_reply
 
-        except Exception:
+        except Exception as e:
             # If LLM not available, use the deterministic message
-            pass
+            print(f"LLM enhancement failed: {e}")
 
         # Log + remember
         self.logger.log({"seller_message": seller_message, "decision": result.__dict__})
@@ -393,3 +420,42 @@ class YourBuyerAgent:
         self.memory.set_state(state.get("memory", {}))
         self.decision.set_state(state.get("decision", {}))
         self.budget = int(state.get("budget", self.budget))
+
+
+# Example usage and test function
+def test_buyer_agent():
+    """Test the buyer agent with sample negotiation"""
+    print("Testing YourBuyerAgent...")
+    
+    # Create a product and agent
+    product = Product(name="iPhone 13", base_price=50000)
+    agent = YourBuyerAgent(
+        name="TestBuyer", 
+        personality_type="friendly", 
+        budget=45000
+    )
+    
+    # Simulate negotiation
+    test_messages = [
+        "I'm selling this iPhone 13 for ₹55,000",
+        "That's my best price - ₹52,000",
+        "Final offer - ₹48,000, take it or leave it"
+    ]
+    
+    print(f"\n=== Negotiation for {product.name} (Budget: ₹{agent.budget}) ===")
+    
+    for i, seller_msg in enumerate(test_messages, 1):
+        print(f"\nRound {i}:")
+        print(f"Seller: {seller_msg}")
+        
+        response = agent.negotiate(product, seller_msg)
+        print(f"Buyer ({agent.personality_type}): {response.message}")
+        print(f"Action: {response.action}, Offer: {response.offer}")
+        
+        if response.action in ["accept", "reject"]:
+            print("=== Negotiation Ended ===")
+            break
+
+
+if __name__ == "__main__":
+    test_buyer_agent()
