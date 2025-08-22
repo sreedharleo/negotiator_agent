@@ -5,7 +5,7 @@ import math
 import json
 
 from concordia.agents import entity_agent_with_logging
-from concordia.components.entity_component import ContextComponent
+from concordia.components.entity import ContextComponent
 from concordia.associative_memory import associative_memory
 from concordia.language_model import language_model
 
@@ -327,19 +327,34 @@ class YourBuyerAgent:
                 f"Buyer offer (if any): {result.offer}\n"
                 f"Draft a single-sentence reply with the same numeric offer."
             )
-            llm_reply = self.model.generate(system_prompt=sys, user_prompt=user).strip()
-            if llm_reply:
-                result.message = llm_reply
-        except Exception:
+            
+try:
+    prompt = (
+        self.personality.make_pre_act_value()
+        + " Keep the numeric offer unchanged if provided. "
+          "Be concise and cooperative.\n"
+        f"Seller said: {seller_message}\n"
+        f"Buyer action: {result.action}\n"
+        f"Buyer offer (if any): {result.offer}\n"
+        "Draft a single-sentence reply with the same numeric offer."
+    )
+
+    # Call Ollama LLaMA 3.1
+    llm_reply = query_llama(prompt).strip()
+    if llm_reply:
+        result.message = llm_reply
+
+
+except Exception:
             # If LLM not available, use the deterministic message
             pass
 
-        # Log + remember
-        self.logger.log({"seller_message": seller_message, "decision": result.__dict__})
-        self.memory.add_interaction("seller", seller_message, obs.get("seller_offer"))
-        self.memory.add_interaction("buyer", result.message, result.offer)
+# Log + remember
+self.logger.log({"seller_message": seller_message, "decision": result.__dict__})
+self.memory.add_interaction("seller", seller_message, obs.get("seller_offer"))
+self.memory.add_interaction("buyer", result.message, result.offer)
 
-        return result
+return result
 
     def get_state(self) -> Dict[str, Any]:
         return {

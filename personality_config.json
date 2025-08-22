@@ -1,0 +1,50 @@
+# Personality Component
+# ----------------------------
+class BuyerPersonalityComponent(ContextComponent):
+    """
+    Your agent's personality definition.
+    Controls tone and concession style.
+    """
+
+    def __init__(self, personality_type: str = "neutral"):
+        self.personality_type = personality_type
+        # Tunable knobs per personality
+        presets = {
+            "aggressive": dict(opening_multiplier=0.60, concession_rate=0.07, accept_gap=0.04, tone="curt"),
+            "frugal":     dict(opening_multiplier=0.70, concession_rate=0.09, accept_gap=0.06, tone="polite"),
+            "friendly":   dict(opening_multiplier=0.80, concession_rate=0.12, accept_gap=0.10, tone="warm"),
+            "neutral":    dict(opening_multiplier=0.75, concession_rate=0.10, accept_gap=0.08, tone="neutral"),
+        }
+        p = presets.get(personality_type, presets["neutral"])
+        self.opening_multiplier = p["opening_multiplier"]
+        self.concession_rate   = p["concession_rate"]
+        self.accept_gap        = p["accept_gap"]
+        self.tone              = p["tone"]
+
+    def make_pre_act_value(self) -> str:
+        """
+        Provide personality context for the LLM (if you use it to phrase messages).
+        """
+        return (
+            f"You are a buyer with a {self.personality_type} personality. "
+            f"Tone is {self.tone}. Keep responses concise, constructive, and consistent. "
+            f"Never exceed the given budget. Maintain steady concessions at ~{int(self.concession_rate*100)}% "
+            f"of the gap per round. Accept if the remaining gap is within {int(self.accept_gap*100)}% and within budget."
+        )
+
+    def get_state(self) -> Dict[str, Any]:
+        return {
+            "personality_type": self.personality_type,
+            "opening_multiplier": self.opening_multiplier,
+            "concession_rate": self.concession_rate,
+            "accept_gap": self.accept_gap,
+            "tone": self.tone,
+        }
+
+    def set_state(self, state: Dict[str, Any]):
+        self.personality_type  = state.get("personality_type", "neutral")
+        self.opening_multiplier = state.get("opening_multiplier", 0.75)
+        self.concession_rate    = state.get("concession_rate", 0.10)
+        self.accept_gap         = state.get("accept_gap", 0.08)
+        self.tone               = state.get("tone", "neutral")
+
