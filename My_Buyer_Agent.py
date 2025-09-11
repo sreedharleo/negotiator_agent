@@ -308,36 +308,54 @@ class ImprovedBuyerDecisionComponent(ContextComponent):
         return max(5000, min(counter, max_offer))  # Minimum ₹5000 offer
     
 # 4. Enhanced message generation with better personality traits
-def generate_personality_message(
-    base_message: str, 
-    personality_type: str, 
-    context: str = "normal"
-) -> str:
-    """Generate personality-specific messages"""
-    
-    enhancements = {
+import random
+
+def generate_personality_message(base_message: str, personality_type: str, context: str = "normal") -> str:
+    phrases = {
         "aggressive": {
-            "pressure": "I'm not interested in wasting time here.",
-            "deadline": "I've got other sellers to talk to.",
-            "final": "This is my final offer - take it or leave it."
+            "pressure": [
+                "Let's cut the chase.",
+                "Don’t waste my time.",
+                "We both know that's overpriced."
+            ],
+            "final": [
+                "This is my last offer.",
+                "Take it or leave it.",
+                "No more discussion after this."
+            ]
         },
         "diplomatic": {
-            "rapport": "I appreciate you working with me on this.",
-            "collaboration": "Let's find a price that works for both of us.",
-            "respect": "I understand you have a business to run."
+            "rapport": [
+                "I value this conversation.",
+                "Thanks for working with me.",
+                "I respect your position."
+            ],
+            "collaboration": [
+                "Let’s meet in the middle.",
+                "We can find common ground.",
+                "I think there’s room for compromise."
+            ]
         },
         "analytical": {
-            "data": "Based on current market rates,",
-            "logic": "From a purely economic standpoint,",
-            "calculation": "My analysis shows that"
+            "data": [
+                "Market trends suggest",
+                "Based on my calculations,",
+                "Looking at the data,"
+            ],
+            "logic": [
+                "Economically speaking,",
+                "Logically, it makes sense that",
+                "From a numbers standpoint,"
+            ]
         }
     }
+
+    if personality_type in phrases and context in phrases[personality_type]:
+        phrase = random.choice(phrases[personality_type][context])
+        return f"{phrase} {base_message}"
     
-    if personality_type in enhancements and context in enhancements[personality_type]:
-        enhancement = enhancements[personality_type][context]
-        return f"{enhancement} {base_message}"
-    
-    return base_message    
+    return base_message
+   
 def print_summary(results):
     print("\n" + "="*70)
     print("📊 FINAL BUYER AGENT PERFORMANCE SUMMARY")
@@ -354,27 +372,6 @@ def print_summary(results):
     print("="*70 + "\n")
 
 
-def main():
-    results = {}   # ✅ create results dictionary here
-
-    # --- Test Aggressive Agent ---
-    # ... run your scenarios and capture values ...
-    results["Aggressive"] = {"deals": 3, "savings": 32000}
-
-    # --- Test Diplomatic Agent ---
-    # ... run scenarios ...
-    results["Diplomatic"] = {"deals": 3, "savings": 22000}
-
-    # --- Test Analytical Agent ---
-    # ... run scenarios ...
-    results["Analytical"] = {"deals": 3, "savings": 32000}
-
-    # ✅ Now call summary at the end
-    print_summary(results)
-
-
-if __name__ == "__main__":
-    main()
 
 
 # 3. Add a proper main function for testing
